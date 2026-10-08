@@ -224,8 +224,11 @@ struct JvmSettings: Codable, Equatable {
             //    이 옵션 때문에 JLI 가 앱 진입점을 다시 부르는데, 그건 정상 설계이며
             //    `FlameNativeContinueJVM()` 이 받아 처리한다(FlameLauncherMain 참고).
             "-XstartOnFirstThread",
-            "-Xmx\(maxHeapMb)M",
-            "-Xms\(minHeapMb)M",
+            // ⚠️ 저장된 값을 그대로 쓰지 않는다. 천장은 **그때그때의 jetsam 예산**에서
+            //    나오는데(기기·다른 앱 상태에 따라 달라진다), 예전에 더 큰 기기 상태에서
+            //    고른 값이 그대로 남아 있으면 지금은 반드시 죽는 설정이 된다.
+            "-Xmx\(min(maxHeapMb, JvmSettingsStore.maxHeapCeilingMb))M",
+            "-Xms\(min(minHeapMb, JvmSettingsStore.maxHeapCeilingMb))M",
             "-XX:+UnlockExperimentalVMOptions",
             // 스택 가드 페이지를 무작위로 할당하다 나는 크래시 회피 (PojavLauncher iOS)
             "-XX:+DisablePrimordialThreadGuardPages",
@@ -592,8 +595,14 @@ enum JvmSettingsStore {
     ///
     ///    무거운 모드팩에서는 메타스페이스·코드 캐시·JIT 미러가 커진다. 힙을 파일에
     ///    올린 채로 코블버스(모드 137개)를 끝까지 돌려 **힙 밖만** 따로 쟀다:
-    ///    최대 885 MB. 그 실측값에 여유를 붙인다.
-    static let offHeapFloorMb = 896
+    ///    최대 885 MB(그때는 Vulkan 경로였다).
+    ///
+    /// ⚠️ **GL(MobileGlues/ANGLE) 경로는 그보다 훨씬 크다.** ANGLE 이 텍스처를 앱 메모리에
+    ///    들고 있고 GLSL 캐시·미러 코드 캐시가 더해진다. 아이패드(M2, iPadOS 18.6)에서
+    ///    같은 모드팩을 GL 로 돌린 실측: 죽기 직전 전체 4980 MB, 그중 힙 커밋이 3560 —
+    ///    **힙 밖 1420 MB**. 예전 값(896)으로 천장을 열어 주면 그 차이(약 520)만큼
+    ///    예산을 넘겨서 부팅 직후 jetsam 으로 죽는다("Game took 135s to start" 직후 사망).
+    static let offHeapFloorMb = 1408
 }
 
 extension JvmSettings {

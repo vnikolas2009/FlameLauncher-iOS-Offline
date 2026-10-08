@@ -351,6 +351,100 @@ bool FlameNativeRequestTrollStoreJIT(void) {
     return true;
 }
 
+/// JIT 경로 추적. **os_log 는 기기에서 꺼내기가 번거롭다**(최신 macOS 의 `log stream` 은
+/// 기기를 못 붙는다) — 파일에 남기면 devicectl 로 그대로 가져올 수 있다.
+static void FlameJITLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *line = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+                                                            inDomains:NSUserDomainMask].firstObject;
+    NSURL *url = [documents URLByAppendingPathComponent:@"jitlog.txt"];
+    NSString *stamped = [NSString stringWithFormat:@"%@ %@\n", NSDate.date, line];
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:url.path];
+    if (!handle) {
+        [stamped writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    } else {
+        [handle seekToEndOfFile];
+        [handle writeData:[stamped dataUsingEncoding:NSUTF8StringEncoding]];
+        [handle closeFile];
+    }
+    NSLog(@"[FlameJIT] %@", line);
+}
+
+void FlameNativeJITNote(NSString *note) { FlameJITLog(@"%@", note); }
+
+/// JIT 스크립트(UniversalJIT26.js)를 base64 로.
+///
+/// ⚠️ **우리 도우미에게는 조건 없이 보낸다.** 기기에 TXM 이 있는지는 StikJIT 이 스스로 보고
+///    필요할 때만 돌린다. 우리 판단(FlameJITFlag…)과 StikJIT 의 판단이 엇갈리면, 저쪽은
+///    TXM 이 있다고 보고 **자기 내장 universal.js** 를 돌린다 — 그건 앱이 brk 프로토콜을
+///    구현한 경우를 기다리는 스크립트라 JVM 에서는 "handling signal 1" 에서 영영 멈춘다
+///    (아이패드 실측). JVM 쪽을 아는 스크립트는 우리 것뿐이므로 항상 실어 보낸다.
+static NSString *FlameJITScriptBase64(void) {
+    NSString *path = [NSBundle.mainBundle pathForResource:@"UniversalJIT26" ofType:@"js"];
+    NSData *script = path ? [NSData dataWithContentsOfFile:path] : nil;
+    if (!script) return nil;
+    return [[script base64EncodedStringWithOptions:0]
+        stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet];
+}
+
+/// 우리 도우미 앱(FlameJIT)에게 요청한다.
+///
+/// ⚠️ StikDebug 와 달리 **페어링 파일을 저쪽이 들고 있지 않다.** 런처가 키체인에 보관한
+///    파일을 그때그때 실어 보낸다(PairingFile.swift). 그래서 도우미는 상태가 없고,
+///    도우미를 다시 깔아도 사용자가 할 일이 없다.
+/// 우리 도우미로 켤 수 있는 상태인가(앱이 깔려 있고 페어링 파일도 있다).
+bool FlameNativeFlameJITAvailable(void) {
+    NSURL *probe = [NSURL URLWithString:@"flamejit://enable-jit"];
+    if (![UIApplication.sharedApplication canOpenURL:probe]) return false;
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+                                                            inDomains:NSUserDomainMask].firstObject;
+    return [NSFileManager.defaultManager fileExistsAtPath:
+        [documents URLByAppendingPathComponent:@"StikJIT/pairingFile.plist"].path];
+}
+
+bool FlameNativeRequestFlameJIT(void) {
+    NSURL *probe = [NSURL URLWithString:@"flamejit://enable-jit"];
+    if (![UIApplication.sharedApplication canOpenURL:probe]) {
+        FlameJITLog(@"FlameJIT 없음 (canOpenURL=false)");
+        return false;
+    }
+
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+                                                            inDomains:NSUserDomainMask].firstObject;
+    NSData *pairing = [NSData dataWithContentsOfURL:
+        [documents URLByAppendingPathComponent:@"StikJIT/pairingFile.plist"]];
+    if (!pairing) {
+        FlameJITLog(@"페어링 파일 없음 — %@", documents.path);
+        return false;
+    }
+
+    NSString *encodedPairing = [[pairing base64EncodedStringWithOptions:0]
+        stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet];
+    NSString *script = FlameJITScriptBase64();
+    NSString *urlString = [NSString stringWithFormat:
+        @"flamejit://enable-jit?bundle-id=%@&pid=%d&return=flamelauncher&pairing=%@%@",
+        NSBundle.mainBundle.bundleIdentifier, getpid(), encodedPairing,
+        script ? [@"&script=" stringByAppendingString:script] : @""];
+
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url) {
+        FlameJITLog(@"URL 조립 실패 (길이 %lu)", (unsigned long)urlString.length);
+        return false;
+    }
+    FlameJITLog(@"FlameJIT 호출 — pid=%d, 페어링 %lu바이트, 스크립트 %@",
+                getpid(), (unsigned long)pairing.length, script ? @"포함" : @"없음");
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL ok) {
+            FlameJITLog(@"openURL 결과: %@", ok ? @"열림" : @"거부됨");
+        }];
+    });
+    return true;
+}
+
 /// StikDebug / SideStore 에게 **우리 프로세스에 붙어 JIT 를 켜 달라**고 요청한다.
 ///
 /// ⚠️ iOS 26 + TXM 기기는 프로세스가 스스로 실행 가능 메모리를 못 얻는다. 디버거가
@@ -364,6 +458,9 @@ bool FlameNativeRequestTrollStoreJIT(void) {
 ///
 /// - Returns: 요청을 보냈으면 true. 켜졌는지는 호출자가 폴링으로 확인해야 한다.
 bool FlameNativeRequestDebuggerJIT(void) {
+    // 우리 도우미가 깔려 있고 페어링 파일이 있으면 그쪽이 먼저다(사용자가 할 일이 없다).
+    if (FlameNativeRequestFlameJIT()) return true;
+
     NSString *bundleId = NSBundle.mainBundle.bundleIdentifier;
     NSString *urlString;
 

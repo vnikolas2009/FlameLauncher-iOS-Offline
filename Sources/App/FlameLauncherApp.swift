@@ -47,6 +47,9 @@ struct RootView: View {
         // JIT 은 실행 시점이 아니라 **여기서** 미리 확보한다. 설치가 끝나자마자 실행으로
         // 이어지는 흐름(installAndPlay) 한가운데서 StikDebug 로 튀어나가지 않게 하려는 것이다.
         .task {
+            // 페어링 파일부터 챙긴다 — 밖에서 들어온 걸 거두고, 없으면 키체인에서 되살린다.
+            // (JIT 경로가 그 파일을 쓰므로 JIT 준비보다 **먼저**여야 한다)
+            PairingFile.restoreIfNeeded()
             await JITStatus.shared.prepareAtLaunch()
             // JIT 을 확보한 **다음에** 이어서 실행한다. 순서가 바뀌면 게임 화면이
             // JIT 게이트에 걸려 멈춰 선다(부팅 중 코드 캐시를 못 잡아 죽기 때문).

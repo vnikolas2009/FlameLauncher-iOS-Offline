@@ -367,9 +367,13 @@ static void flame_startMemoryWatch(void) {
             //    프로세스 안에서 줄일 방법이 없다 — 팩을 안 받는 것 말고는.
             // 파일 기반으로 빼돌린 양을 같이 찍는다 — 할당자가 실제로 얼마나
             // 일하고 있는지는 이 숫자로만 알 수 있다(footprint 에는 안 잡히므로).
-            printf("[FlameMem] 사용 %d MB · 남은 여유 %d MB (최저 %d MB) · 파일매핑 %llu MB\n",
+            // ⚠️ 프레임 수도 같이 남긴다. "게임이 멈췄다" 는 신고가 들어왔을 때, 게임이
+            //    도는데 **우리 부팅 오버레이가 안 걷힌 것**인지 진짜로 선 것인지를 로그만
+            //    보고 가를 수 있어야 한다(실측: 아이패드에서 GC 는 도는데 스왑은 0 이었다).
+            printf("[FlameMem] 사용 %d MB · 남은 여유 %d MB (최저 %d MB) · 파일매핑 %llu MB · 프레임 %d\n",
                    used, available, lowest == INT_MAX ? -1 : lowest,
-                   (unsigned long long)(flame_alloc_mapped_bytes() >> 20));
+                   (unsigned long long)(flame_alloc_mapped_bytes() >> 20),
+                   atomic_load_explicit(&flameFrameCount, memory_order_relaxed));
             fflush(stdout);
 
             // ⚠️ 예전 조건은 "첫 프레임이 아직 없을 때" 였는데, 마인크래프트는 로딩 화면을

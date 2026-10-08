@@ -56,12 +56,21 @@ log(`pid = ${pid}`);
 log(`attach_response = ${attachResponse}`);
     
 let totalBreakpoints = 0;
+let consecutiveParseFailures = 0;
 while (!detached) {
     totalBreakpoints++;
     log(`Handling signal ${totalBreakpoints}`);
     
     let brkResponse = send_command(`c`);
     log_verbose(`brkResponse = ${brkResponse}`);
+
+    // ⚠️ 빈 응답 = 디버그 연결이 끊겼다(또는 붙지 못했다). 예전에는 그대로 continue 라
+    //    초당 1만 번씩 도는 무한 루프가 됐다 — 아이패드에서 67만 번까지 돌았고, 그 사이
+    //    뒤따르는 요청은 직렬 큐에 쌓여 아무것도 못 했다. 더 할 수 있는 일이 없으니 끝낸다.
+    if (!brkResponse) {
+        log(`Empty response from debugserver — stopping after ${totalBreakpoints} signals`);
+        break;
+    }
     
     // extract tid, pc, x16
     let tmpMatch = /T[0-9a-f]+thread:(?<tid>[0-9a-f]+);/.exec(brkResponse);
@@ -72,8 +81,13 @@ while (!detached) {
     x16 = tmpMatch ? tmpMatch.groups['reg'] : null;
     if (!tid || !pc || !x16) {
         log(`Failed to extract registers: tid=${tid}, pc=${pc}, x16=${x16}`);
+        if (++consecutiveParseFailures >= 20) {
+            log(`Giving up after ${consecutiveParseFailures} unparseable stop replies`);
+            break;
+        }
         continue;
     }
+    consecutiveParseFailures = 0;
     pc = littleEndianHexStringToNumber(pc);
     x16 = littleEndianHexStringToNumber(x16);
     

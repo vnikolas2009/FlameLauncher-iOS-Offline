@@ -14,9 +14,10 @@
 	<key>com.apple.security.get-task-allow</key>
 	<true/>
 
-	<!-- ⚠️ 아래 두 개는 App ID 에 해당 capability 가 켜져 있어야 서명이 통과한다.
-	     와일드카드 프로파일에는 없어서 꺼둔다 — 켜려면 개발자 포털에서 전용 App ID 를
-	     만들고 capability 를 추가한 뒤 주석을 풀 것.
+	<!-- ⚠️ 아래 두 개는 **개인(무료) 팀으로는 서명되지 않는다.** 2026-10-08 실측:
+	       "Personal development teams … do not support the Extended Virtual Addressing capability"
+	     유료 Apple Developer Program 계정 + 전용 App ID 에 capability 를 켜야 쓸 수 있다.
+	     그래야 jetsam 한도가 올라가서 무거운 모드팩(코블버스 등)에 힙을 4GB 이상 줄 수 있다.
 	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
 	<true/>
 	<key>com.apple.developer.kernel.increased-memory-limit</key>

@@ -9,6 +9,9 @@ struct SettingsView: View {
     @State private var renderer = RendererStore.load()
     @State private var saved = false
     @State private var language = AppLanguage.current
+    @State private var pairingReady = PairingFile.isReady
+    @State private var showPairingPicker = false
+    @State private var pairingError = false
 
     private let ceiling = JvmSettingsStore.maxHeapCeilingMb
 
@@ -32,6 +35,7 @@ struct SettingsView: View {
                     screenSection
                     memorySection
                     gameplaySection
+                    pairingSection
                     advancedSection
                 }
                 .padding(Sizing.isTablet ? 20 : 12)
@@ -267,6 +271,46 @@ struct SettingsView: View {
                       isOn: $settings.unlockFps)
             toggleRow("☁️", String(localized: "구름 끄기"), String(localized: "구름 렌더를 꺼서 프레임을 확보합니다"),
                       isOn: $settings.disableClouds)
+        }
+    }
+
+    /// JIT 페어링 파일 — 한 번 넣으면 앱이 키체인에 보관해서 재설치해도 살아남는다.
+    private var pairingSection: some View {
+        Section("JIT 페어링 파일",
+                note: "StikDebug 가 JIT 를 켤 때 쓰는 파일입니다. 한 번만 넣으면 앱이 보관하고, "
+                    + "앱을 다시 깔아도 알아서 되살립니다.") {
+            HStack(spacing: 10) {
+                Text(pairingReady ? "✅" : "⚠️")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pairingReady ? "보관됨" : "없음")
+                        .font(.system(size: Sizing.isTablet ? 14 : 12, weight: .semibold))
+                        .foregroundStyle(FlameColor.textMain)
+                    Text(pairingReady
+                         ? "재설치해도 다시 넣지 않아도 됩니다."
+                         : "맥에서 만든 페어링 파일을 골라 주세요.")
+                        .font(.system(size: Sizing.isTablet ? 12 : 10))
+                        .foregroundStyle(FlameColor.textSub)
+                }
+                Spacer()
+                Button(pairingReady ? "교체" : "가져오기") { showPairingPicker = true }
+                    .font(.system(size: Sizing.isTablet ? 13 : 11, weight: .semibold))
+                    .foregroundStyle(FlameColor.primary)
+            }
+        }
+        .onAppear { pairingReady = PairingFile.isReady }
+        .fileImporter(isPresented: $showPairingPicker,
+                      allowedContentTypes: [.propertyList, .data]) { result in
+            // ⚠️ 내용으로 검사한다 — lockdown 페어 기록은 확장자가 같아도 터널이 거절한다.
+            guard case .success(let url) = result, PairingFile.importFile(at: url) else {
+                pairingError = true
+                return
+            }
+            pairingReady = true
+        }
+        .alert("이 파일은 페어링 파일이 아닙니다", isPresented: $pairingError) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text("idevice-tools 의 rppairing 으로 만든 파일이어야 합니다(public_key 가 들어 있는 500바이트 안팎).")
         }
     }
 

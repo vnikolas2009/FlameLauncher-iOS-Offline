@@ -115,6 +115,16 @@ for v in $JRE_VERSIONS; do
   rm -rf "$tmp"
 done
 
+# JIT 도우미(FlameJIT)가 쓰는 프레임워크. 릴리스 바이너리는 Swift 6.4 로 빌드돼 있어
+# 우리 Xcode 가 못 읽는다 — 소스에서 빌드한다(자세한 사정은 build-stikjit.sh 머리말).
+if [ -d "$ROOT/Runtime/StikJIT.framework" ]; then
+  echo "StikJIT.framework 는 이미 있습니다 — 건너뜁니다."
+elif command -v xcodegen >/dev/null; then
+  "$ROOT/Scripts/build-stikjit.sh" || echo "⚠️  StikJIT 빌드 실패 — FlameJIT 타깃만 빌드가 안 됩니다."
+else
+  echo "⚠️  xcodegen 이 없어 StikJIT 를 건너뜁니다 (FlameJIT 타깃을 빌드하려면 필요)."
+fi
+
 echo
 echo "완료. 받은 용량:"
 du -sh "$ROOT/Runtime"/* 2>/dev/null | sed 's/^/  /'

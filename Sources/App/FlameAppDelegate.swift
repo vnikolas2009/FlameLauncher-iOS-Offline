@@ -16,6 +16,24 @@ final class FlameAppDelegate: UIResponder, UIApplicationDelegate {
 
     private let launcher = LauncherModel()
 
+    /// ⚠️ **없으면 앱이 죽는다.** URL 스킴을 선언해 두고(CFBundleURLTypes) 이 메서드가
+    ///    없으면, 누가 그 URL 을 열었을 때 UIKit 이 단언에 걸려 abort 한다:
+    ///      -[UIApplication _applicationOpenURLAction:payload:origin:] → NSAssertionHandler
+    ///    실측: FlameJIT 이 JIT 를 켜고 `flamelauncher://jit-done` 으로 돌아오는 순간
+    ///    런처가 SIGABRT 로 죽었다(JIT 는 멀쩡히 켜진 뒤였다).
+    func application(
+        _ app: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        guard url.scheme == "flamelauncher" else { return false }
+        if url.host == "jit-done" {
+            // 폴링(최대 0.5초 간격)을 기다릴 필요가 없다 — 바로 확인하고 화면을 넘긴다.
+            Task { @MainActor in JITStatus.shared.refresh() }
+        }
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil

@@ -180,6 +180,18 @@ FlameJITFlags FlameNativeGetJITFlags(BOOL refresh) {
 
         if (DeviceHasTXMReal()) cachedFlags |= FlameJITFlagHasTXM;
 
+        // ⚠️ 미러 경로가 필요한지는 **OS 버전이 아니라 실제 능력**으로 정한다.
+        //
+        //    예전에는 위 iOS 26 블록 안에서만 ForceMirrored 를 켰다. 그런데 TXM 은 26 보다
+        //    먼저 왔다 — M2 아이패드(iPadOS 18.6)가 그렇다. 거기서는 TXM=1 인데 미러가
+        //    꺼져 있어서 DeviceHasTXM() 이 NO 를 답하고(둘 다 요구한다) JVM 이 평범한
+        //    코드 캐시를 잡으러 간다. 그 경로는 MAP_JIT 을 요구하는데 TXM 기기에서는
+        //    디버거가 붙어 있어도 EPERM 이라, JVM 이 "Using G1" 직후 조용히 죽었다(실측).
+        //    MAP_JIT 이 막혔고 TXM 이 있으면 미러 경로가 유일한 길이다.
+        if ((cachedFlags & FlameJITFlagHasTXM) && !FlameNativeCanAllocateJITMemory()) {
+            cachedFlags |= FlameJITFlagForceMirrored;
+        }
+
         // ⚠️ 맥('Designed for iPad')에서 ForceMirrored 를 **강제하지 말 것.**
         //
         //    솔깃한 이유가 있다: 맥은 MAP_JIT 을 안 내주고(EINVAL 22, 애드혹으로

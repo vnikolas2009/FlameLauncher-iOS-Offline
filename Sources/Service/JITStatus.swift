@@ -51,8 +51,8 @@ final class JITStatus {
                 return String(localized: "컴퓨터의 AltServer 와 같은 Wi-Fi 에 있어야 합니다. 찾는 중…")
             case .debugger:
                 return """
-                StikDebug 로 자동 전환됐다가 곧 돌아옵니다. 별도 조작은 필요 없어요.
-                JIT 스크립트도 같이 보내므로 StikDebug 에서 따로 고르지 않아도 됩니다.
+                JIT 도우미로 자동 전환됐다가 곧 돌아옵니다. 별도 조작은 필요 없어요.
+                페어링 파일과 스크립트를 같이 보내므로 도우미에서 고를 것은 없습니다.
                 """
             case .manual:
                 return """
@@ -140,12 +140,20 @@ final class JITStatus {
 
             if FlameNativeHasTrollStoreJIT() { return .trollStore }
             if !isDebuggable { return .impossible }
+            // ⚠️ 우리 도우미가 **AltServer 보다 먼저**다. 아이패드처럼 AltStore 가 깔린
+            //    기기에서는 AltServer 경로가 먼저 걸려 버리는데, 그건 컴퓨터가 같은
+            //    Wi-Fi 에 있어야 하고 iOS 18 에서는 JIT 를 못 켠다 — 실측: 그 상태로
+            //    "JIT 가 필요합니다" 화면에서 멈췄다. 도우미는 기기 안에서 끝난다.
+            if FlameNativeFlameJITAvailable() { return .debugger }
             if FlameNativeAltServerAvailable() { return .altServer }
             // ⚠️ 예전에는 여기서 바로 .manual 이었다 — 사용자가 StikDebug 를 열고 앱을
             //    고르고 스크립트를 지정하는 걸 매번 손으로 해야 했다.
             //    URL 스킴으로 부르면 그 과정이 통째로 사라진다.
             return .debugger
         }()
+
+        FlameNativeJITNote("refresh: 경로=\(method) 플래그=\(flagOn) 실행권한=\(canExecute) "
+                           + "디버그가능=\(isDebuggable) 설치=\(installType)")
     }
 
     /// JIT 가 켜질 때까지 기다린다. 자동으로 켤 수 있는 경로가 있으면 먼저 시도한다.
@@ -168,6 +176,8 @@ final class JITStatus {
         //    (그래서 "종종" 안 붙었다 — 뜨는 속도에 따라 갈렸다).
         //    실패해도 에러가 없어서 화면에는 그냥 스피너만 돈다.
         await waitUntilActive()
+
+        FlameNativeJITNote("경로=\(method) 플래그=\(FlameNativeIsJITEnabled()) 실행권한=\(FlameNativeHasExecutableMemory()) 디버그가능=\(isDebuggable)")
 
         switch method {
         case .trollStore:

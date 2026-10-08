@@ -21,6 +21,42 @@ settings:
     CODE_SIGN_STYLE: Automatic
 
 targets:
+  # ── JIT 도우미 ────────────────────────────────────────────────────────────────
+  # ⚠️ **따로 뜨는 앱**이어야 한다. 디버거를 자기 자신에게 붙이면 교착하고,
+  #    런처 안에 도우미 앱 익스텐션으로 넣는 길은 `AppExtensionProcess` 가 iOS 26+ 라
+  #    아이패드(18.x)에서 못 쓴다. 별도 앱이면 iOS 17.4+ 어디서나 된다.
+  FlameJIT:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.4"
+    sources:
+      - path: FlameJIT/Sources
+    dependencies:
+      - framework: Runtime/StikJIT.framework
+        embed: true
+        codeSign: true
+    info:
+      path: FlameJIT/Info.plist
+      properties:
+        CFBundleDisplayName: FlameJIT
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
+        ITSAppUsesNonExemptEncryption: false
+        # 런처가 부르는 스킴. 요청은 우리 번들 ID 에서 온 것만 받는다(JITRequestModel).
+        CFBundleURLTypes:
+          - CFBundleURLName: kr.co.donghyun.flamejit
+            CFBundleURLSchemes: [flamejit]
+        # 끝나고 런처로 돌려보낼 때 쓴다.
+        LSApplicationQueriesSchemes: [flamelauncher]
+        # RSD 터널이 기기 안의 주소(10.7.0.1)로 붙는다 — iOS 가 로컬 네트워크 권한을 묻는다.
+        NSLocalNetworkUsageDescription: "이 기기의 디버그 터널에 연결해 JIT 를 켭니다."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kr.co.donghyun.flamejit
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_ENTITLEMENTS: FlameJIT/FlameJIT.entitlements
+
   FlameLauncher:
     type: application
     platform: iOS
@@ -117,8 +153,13 @@ targets:
         # JIT 도구를 URL 스킴으로 부른다. 여기 없으면 canOpenURL 이 늘 NO 라
         # "도구가 없는 것"과 "못 물어본 것"을 구분할 수 없다.
         LSApplicationQueriesSchemes:
+          - flamejit
           - stikjit
           - sidestore
+        # FlameJIT 이 일을 끝내고 돌아올 때 쓴다(flamelauncher://jit-done).
+        CFBundleURLTypes:
+          - CFBundleURLName: kr.co.donghyun.flamelauncher
+            CFBundleURLSchemes: [flamelauncher]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kr.co.donghyun.flamelauncher

@@ -170,6 +170,15 @@ bool FlameNativeRequestTrollStoreJIT(void);
 
 /// StikDebug(17.4+) / SideStore 에게 JIT 활성화를 요청한다.
 /// JIT 스크립트를 URL 에 실어 보내므로 도구 쪽에서 따로 지정할 필요가 없다.
+/// 우리 도우미 앱(FlameJIT)에게 JIT 를 요청한다. 깔려 있지 않거나 페어링 파일이 없으면 false.
+/// 우리 도우미(FlameJIT)로 켤 수 있는 상태인가.
+bool FlameNativeFlameJITAvailable(void);
+
+bool FlameNativeRequestFlameJIT(void);
+
+/// JIT 경로 추적을 Documents/jitlog.txt 에 한 줄 남긴다(기기에서 꺼내 보려고).
+void FlameNativeJITNote(NSString *note);
+
 bool FlameNativeRequestDebuggerJIT(void);
 
 /// AltKit 이 번들에 들어 있는지 — 없으면 AltServer 경로는 쓸 수 없다.
