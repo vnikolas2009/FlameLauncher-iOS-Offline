@@ -7,7 +7,12 @@ enum Joystick {
     /// 각도를 8방위로 양자화해 W/A/S/D 조합을 만든다.
     /// 화면 좌표계라 위쪽이 -y — 각도 0 은 오른쪽(D)이다.
     static func keys(forAngle angle: CGFloat) -> Set<Int> {
-        let sector = Int(((angle + .pi * 2 + .pi / 8) / (.pi / 4)).rounded(.down)) % 8
+        // 한 식으로 쓰면 Xcode 26 의 타입 검사기가 시간 초과로 포기한다(CGFloat 리터럴 추론).
+        let full: CGFloat = 2 * CGFloat.pi
+        let half: CGFloat = CGFloat.pi / 8
+        let step: CGFloat = CGFloat.pi / 4
+        let shifted: CGFloat = angle + full + half
+        let sector = Int((shifted / step).rounded(.down)) % 8
         switch sector {
         case 0: return [d]
         case 1: return [d, s]

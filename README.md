@@ -37,6 +37,10 @@ they run. A real OpenJDK boots inside the app process — this is not an emulato
 
 The renderer is per-instance. Shaders require **MobileGlues**.
 
+### Languages
+
+English, Русский, 한국어 — follows the system language, or pick one in Settings → Language.
+
 ### Controls
 
 - **On-screen buttons** — you place and size them yourself
@@ -51,8 +55,11 @@ open a room, share the code, they join with it.
 
 ### Account
 
-Microsoft sign-in only. **No game files ship with the app** — you download them from
-Mojang's own servers with your own account.
+**Offline account (nickname only).** There is no Microsoft/Mojang sign-in — you type a nickname
+(3–16 characters: letters, digits, `_`) and play. The UUID is derived from the nickname the same
+way vanilla does it, so the same nickname always gets the same player data. Offline accounts can
+play single-player and join servers set to `online-mode=false`; servers that verify accounts
+will refuse them. **No game files ship with the app** — they are downloaded from Mojang's own servers.
 
 ---
 
@@ -64,7 +71,6 @@ Mojang's own servers with your own account.
 |---|---|
 | **iOS 17.0 or later** | arm64 device (iPhone XS onward, 2018-or-later iPad) |
 | **3 GB free** | 1 GB app plus the game and a Java runtime |
-| **A paid account** | Minecraft Java Edition |
 
 ### 2-1. Understand JIT first
 
@@ -123,7 +129,7 @@ inside StikDebug. The computer is not needed again after step 3.
 
 ### 2-5. First run
 
-1. **Sign in** — avatar, top right → Microsoft account
+1. **Set a nickname** — avatar, top right → Enter a nickname (or just press play, it asks)
 2. **Pick a version** — left menu → the release tab
 3. **Pick a loader** — vanilla, Fabric, Forge or NeoForge
 4. **Download** — game files and a Java runtime; first time only, 5–15 minutes

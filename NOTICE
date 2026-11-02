@@ -58,12 +58,11 @@ readable and each patch fails loudly if upstream moves:
                                    instead of the Android RTLD_DEFAULT constant
                                    in glXGetProcAddress.
 
-    Scripts/build-terracotta.sh     5 patches. Pins EasyTier to the tag the
-                                   repository declares; adds iOS to the
-                                   InterfaceFilter branch (the macOS branch
-                                   shells out to `networksetup`, which iOS does
-                                   not have); exposes the HTTP control server
-                                   and a single C entry point for Swift.
+    Scripts/build-terracotta.sh     Builds a static library; exposes the HTTP
+                                   control server and a single C entry point for
+                                   Swift. Version-pin fixes for EasyTier are
+                                   applied only while upstream still needs them
+                                   (v2.6.4 already handles iOS itself).
 
     Scripts/build-javaapp.sh       GLFW shims for LWJGL 3.4.1, and a null guard
                                    in glfwGetInputMode.
@@ -77,4 +76,4 @@ TRADEMARKS
 Minecraft is a trademark of Mojang AB. This project is not affiliated with,
 endorsed by, or connected to Mojang AB or Microsoft. It ships no Minecraft
 game assets; the game is downloaded from Mojang's own servers by the user,
-using the user's own account.
+as a plain offline (nickname) account.

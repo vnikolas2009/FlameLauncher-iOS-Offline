@@ -169,17 +169,6 @@ struct MainView: View {
             return Alert(title: Text(alert.title), message: Text(alert.message),
                          dismissButton: .default(Text("확인")))
         }
-        // 로그인 실패는 조용히 삼키면 안 된다 — 사용자는 "눌렀는데 아무 일도 안 일어남" 만 겪는다.
-        // 로그인 실패도 같은 채널로 보낸다. 별도 .alert 를 달면 위의 알림을 덮어
-        // 버전 전환 안내가 안 뜬다 — 실제로 그렇게 두 번 놓쳤다.
-        .onChange(of: auth.error) { _, message in
-            guard let message, !message.isEmpty else { return }
-            launcher.alert = LauncherModel.AlertMessage(title: String(localized: "로그인 실패"), message: message)
-            auth.error = nil
-        }
-        .overlay {
-            if auth.isBusy { LoginProgressOverlay(step: auth.progress) }
-        }
         .onAppear {
             InstanceStore.shared.reload()
             instances = InstanceStore.shared.instances
@@ -372,22 +361,23 @@ struct MainView: View {
 
     /// 설치됨 탭의 실행 버튼.
     private func play() {
-        guard auth.isLoggedIn else {
-            Task { await auth.login() }
-            return
+        // 닉네임이 없으면 먼저 묻고, 입력이 끝나면 이어서 실행한다(버튼을 또 누르게 하지 않는다).
+        Task { @MainActor in
+            if !auth.isLoggedIn { await auth.login() }
+            guard auth.isLoggedIn else { return }
+            if let meta = selectedInstance { launcher.launch(meta) }
         }
-        if let meta = selectedInstance { launcher.launch(meta) }
     }
 
     /// 정식·전체 탭에서 버전을 눌렀을 때 — 로더를 고르고 새 인스턴스를 만든다.
     /// 설치됨 탭의 "선택됨" 카드를 눌렀을 때도 같은 곳으로 온다(버전 바꿔 다시 설치).
     private func install(_ version: VersionEntry) {
-        guard auth.isLoggedIn else {
-            Task { await auth.login() }
-            return
+        Task { @MainActor in
+            if !auth.isLoggedIn { await auth.login() }
+            guard auth.isLoggedIn else { return }
+            launcher.selectedVersion = version
+            showLoaderSheet = true
         }
-        launcher.selectedVersion = version
-        showLoaderSheet = true
     }
 }
 
@@ -441,10 +431,10 @@ private struct ProfileHeader: View {
             ProfileAvatar(size: 52)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(auth.isLoggedIn ? (auth.username ?? "") : "로그인이 필요합니다")
+                Text(auth.isLoggedIn ? (auth.username ?? "") : "닉네임이 필요합니다")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(FlameColor.textMain)
-                Text(auth.isLoggedIn ? "Microsoft 계정으로 로그인됨" : "탭해서 Microsoft 계정으로 로그인")
+                Text(auth.isLoggedIn ? "오프라인 계정" : "오른쪽 위 아바타에서 닉네임 입력")
                     .font(.system(size: 12))
                     .foregroundStyle(FlameColor.textSub)
             }
@@ -466,25 +456,6 @@ private struct ProfileHeader: View {
 
 }
 
-/// 로그인 진행 중 오버레이. 5단계라 그냥 도는 스피너보다 어디쯤인지 보여주는 게 낫다.
-private struct LoginProgressOverlay: View {
-    let step: String?
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.6).ignoresSafeArea()
-            VStack(spacing: 12) {
-                ProgressView().tint(FlameColor.primary)
-                Text(step ?? "로그인 중…")
-                    .font(.system(size: 13))
-                    .foregroundStyle(FlameColor.textMain)
-            }
-            .padding(24)
-            .flameCard(radius: 14)
-        }
-    }
-}
-
 /// 스킨 얼굴 아바타 + 로그인 메뉴. 안드로이드 `loadSkinFace` + DropdownMenu 대응.
 private struct ProfileAvatar: View {
     @Environment(AuthStore.self) private var auth
@@ -494,9 +465,10 @@ private struct ProfileAvatar: View {
         Menu {
             if auth.isLoggedIn {
                 Text(auth.username ?? "")
-                Button("로그아웃", role: .destructive) { auth.logout() }
+                Button("닉네임 바꾸기") { Task { await auth.login() } }
+                Button("닉네임 지우기", role: .destructive) { auth.logout() }
             } else {
-                Button("로그인") { Task { await auth.login() } }
+                Button("닉네임 입력") { Task { await auth.login() } }
             }
         } label: {
             ZStack {
@@ -727,7 +699,7 @@ private struct InstalledPanel: View {
                        maxHeight: Self.rowHeight, alignment: .leading)
                 .flameCard(fill: FlameColor.bgDark, radius: 10)
 
-                Button(auth.isLoggedIn ? "▶  실행" : "로그인", action: onLaunch)
+                Button(auth.isLoggedIn ? "▶  실행" : "닉네임 입력", action: onLaunch)
                     .buttonStyle(FlameButtonStyle(height: Self.rowHeight, radius: 10))
                     .font(.system(size: Sizing.isTablet ? 15 : 13, weight: .bold))
                     .frame(width: Sizing.isTablet ? 130 : 96)
@@ -813,7 +785,7 @@ private struct MobileBottomBar: View {
                     if launcher.progress.isActive {
                         ProgressView().tint(.white).frame(width: 60)
                     } else {
-                        Text(auth.isLoggedIn ? "▶ 실행" : "로그인")
+                        Text(auth.isLoggedIn ? "▶ 실행" : "닉네임 입력")
                             .font(.system(size: 12, weight: .bold))
                             .frame(width: 60)
                     }
@@ -852,7 +824,7 @@ private struct MobileBottomBar: View {
 
     private var canPlay: Bool {
         if launcher.progress.isActive { return false }
-        if !auth.isLoggedIn { return true }   // 누르면 로그인으로 유도
+        if !auth.isLoggedIn { return true }   // 누르면 닉네임 입력으로 유도
         return tab == .installed
             ? selectedInstance != nil
             : launcher.selectedVersion.map { VersionRules.isSupported($0.id) } ?? false

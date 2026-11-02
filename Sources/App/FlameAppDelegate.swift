@@ -59,7 +59,6 @@ final class FlameAppDelegate: UIResponder, UIApplicationDelegate {
         OrientationLock.watch(window)
 
         Task { @MainActor in
-            await AuthStore.shared.restore()
             await launcher.loadVersions()
         }
         return true

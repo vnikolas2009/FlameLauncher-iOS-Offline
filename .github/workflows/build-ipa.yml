@@ -1,0 +1,367 @@
+name: Build IPA
+
+# 서명 없는(unsigned) IPA 를 만든다. AltStore / SideStore / Sideloadly / KSign / LiveContainer 가
+# 설치할 때 자기 인증서로 다시 서명한다. get-task-allow(JIT 용 디버거 부착)는 ldid 로 심어 둔다.
+#
+# 네이티브 부품은 서로 독립이라 job 으로 나눠 병렬로 만든다:
+#   runtime   fetch-runtime.sh   렌더러·LWJGL 기본 스택·JRE·MoltenVK
+#   javaapp   build-javaapp.sh   패치된 LWJGL jar (3.3.3 기본 + 3.4.3 스택)
+#   lwjgl     build-lwjgl-natives.sh   LWJGL 3.4.3 네이티브 dylib
+#   spirv     build-spirv-cross.sh     libspirv-cross.dylib (26.2+)
+#   mgl       build-mobileglues.sh     libmobileglues.dylib
+#   terracotta build-terracotta.sh     libterracotta.a (온라인 LAN)
+#   ipa       위를 합쳐 xcodegen → xcodebuild → ldid → .ipa
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 업스트림 이름이 바뀌었을 때 한 곳에서 고칠 수 있게 둔다.
+  LWJGL_NEW: "3.4.3"
+
+jobs:
+  # 번역 파일 점검: en / ru / ko 의 키가 똑같고, 형식 지정자(%@ %lld %d)가 키와 맞는지 본다.
+  strings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 - <<'PY'
+          import re, sys
+          pat = re.compile(r'^"(.*)" = "(.*)";$')
+          spec = re.compile(r'%(\d+\$)?(lld|d|@)')
+          def load(lang):
+              d = {}
+              for line in open(f'Resources/{lang}.lproj/Localizable.strings', encoding='utf8'):
+                  m = pat.match(line.rstrip('\n'))
+                  if m: d[m.group(1)] = m.group(2)
+              return d
+          langs = {l: load(l) for l in ('en', 'ru', 'ko')}
+          bad = 0
+          base = set(langs['en'])
+          for l, d in langs.items():
+              if set(d) != base:
+                  bad += 1
+                  print(l, 'missing:', sorted(base - set(d))[:5], 'extra:', sorted(set(d) - base)[:5])
+              for k, v in d.items():
+                  if sorted(x[1] for x in spec.findall(k)) != sorted(x[1] for x in spec.findall(v)):
+                      bad += 1; print(l, 'format specifier mismatch:', k, '->', v)
+          print({l: len(d) for l, d in langs.items()})
+          sys.exit(1 if bad else 0)
+          PY
+  runtime:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch runtime (frameworks, base LWJGL, JRE 8/17/21/25, MoltenVK)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # StikJIT 는 아래 별도 job 이 아니라 여기서 xcodegen 이 있을 때 소스에서 빌드된다.
+          brew install xcodegen
+          Scripts/fetch-runtime.sh main "8 17 21 25"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rt-base
+          path: Runtime
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 1
+
+  javaapp:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "8"
+          architecture: aarch64
+      # ⚠️ 업스트림 Amethyst 의 make 가 병렬로 javac 를 돌리다가 가끔 빈 .class 를 남기고
+      #    "found empty class files" 로 죽는다(같은 커밋이 성공했다 실패했다 한다). 재시도하면 통과한다.
+      - name: Build patched LWJGL (default 3.3.3 stack)
+        run: |
+          for i in 1 2 3; do
+            BOOTJDK="$JAVA_HOME/bin" Scripts/build-javaapp.sh && exit 0
+            echo "::warning::build-javaapp 실패 — 재시도 $i/3"
+          done
+          exit 1
+      - name: Build patched LWJGL (${{ env.LWJGL_NEW }} stack)
+        run: |
+          for i in 1 2 3; do
+            LWJGL_VERSION="$LWJGL_NEW" BOOTJDK="$JAVA_HOME/bin" Scripts/build-javaapp.sh && exit 0
+            echo "::warning::build-javaapp 실패 — 재시도 $i/3"
+          done
+          exit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rt-javaapp
+          path: |
+            Runtime/libs
+            Runtime/libs341
+          include-hidden-files: true
+          if-no-files-found: error
+
+  lwjgl:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "8"
+          architecture: aarch64
+      - run: brew install automake autoconf libtool
+      - name: Build LWJGL natives
+        run: Scripts/build-lwjgl-natives.sh "$LWJGL_NEW"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rt-lwjgl
+          path: Runtime/Frameworks341
+          if-no-files-found: error
+
+  spirv:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install ninja
+      - run: Scripts/build-spirv-cross.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rt-spirv
+          path: Runtime/Frameworks/libspirv-cross.dylib
+          if-no-files-found: error
+
+  mgl:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install ninja
+      - run: mkdir -p Runtime/Frameworks && Scripts/build-mobileglues.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rt-mgl
+          path: Runtime/Frameworks/libmobileglues.dylib
+          if-no-files-found: error
+
+  terracotta:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-terracotta-${{ github.run_id }}
+          restore-keys: cargo-terracotta-
+      - run: brew install protobuf cmake || true
+      - run: Scripts/build-terracotta.sh --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rt-terracotta
+          path: Runtime/Terracotta/libterracotta.a
+          if-no-files-found: error
+
+  ipa:
+    needs: [runtime, javaapp, lwjgl, spirv, mgl, terracotta]
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download runtime pieces
+        uses: actions/download-artifact@v4
+        with:
+          name: rt-base
+          path: Runtime
+      - name: Overlay built pieces
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rt-*
+          path: Runtime-built
+      - name: Merge
+        run: |
+          set -euo pipefail
+          # javaapp 가 만든 jar 이 기본 입력 jar 을 대체한다(build-javaapp.sh 가 *.jar 을 지우고 채운다).
+          rm -f Runtime/libs/*.jar Runtime/libs341/*.jar
+          cp -R Runtime-built/rt-javaapp/. Runtime/
+          mkdir -p Runtime/Frameworks341 Runtime/Frameworks Runtime/Terracotta
+          cp -R Runtime-built/rt-lwjgl/. Runtime/Frameworks341/
+          cp Runtime-built/rt-spirv/libspirv-cross.dylib Runtime/Frameworks/
+          cp Runtime-built/rt-mgl/libmobileglues.dylib Runtime/Frameworks/
+          cp Runtime-built/rt-terracotta/libterracotta.a Runtime/Terracotta/
+          rm -rf Runtime-built
+          echo "── Runtime ──"; du -sh Runtime/* | sed 's/^/  /'
+          ls Runtime/libs Runtime/libs341 Runtime/Frameworks341
+
+      - name: Tools
+        run: brew install xcodegen ldid
+
+      - name: Secrets.plist
+        env:
+          FLAME_CURSEFORGE_KEY: ${{ secrets.FLAME_CURSEFORGE_KEY }}
+        run: |
+          Scripts/write-secrets.sh
+          # project.yml 이 이 파일을 복사 단계에 넣는다(optional 이어도 Xcode 가 없으면 빌드를 거부한다).
+          # 키가 없으면 빈 plist — 앱은 CurseForge 검색만 끄고 Modrinth 는 그대로 쓴다.
+          if [ ! -f Resources/Secrets.plist ]; then
+            printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0"><dict/></plist>' > Resources/Secrets.plist
+          fi
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project FlameLauncher.xcodeproj -scheme FlameLauncher \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build.log | tail -n 60
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/FlameLauncher.app"
+          [ -d "$APP" ] || { echo "::error::앱 번들이 없습니다"; find build -name '*.app' -maxdepth 6; exit 1; }
+          BIN="$APP/FlameLauncher"
+
+          # 서명 없이 빌드하면 프로젝트의 postBuildScript 가 일찍 끝나서(서명 아이덴티티가 없다)
+          # AWT 스텁이 JRE 로 복사되지 않는다. 같은 일을 여기서 한다.
+          STUB="$APP/Frameworks/libawt_xawt.dylib"
+          if [ -f "$STUB" ] && [ -d "$APP/java_runtimes" ]; then
+            for jre in "$APP"/java_runtimes/*/; do
+              [ -d "$jre/lib" ] && cp -f "$STUB" "$jre/lib/libawt_xawt.dylib"
+            done
+          fi
+
+          # 가짜 서명(ldid). 설치 도구가 자기 인증서로 덮어쓰지만, 그 전에 Mach-O 마다 서명 블록이
+          # 있어야 하고 메인 실행 파일에는 get-task-allow 가 들어 있어야 한다.
+          echo "▸ ldid: 번들 안 Mach-O"
+          n=0
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              [ "$f" = "$BIN" ] && continue
+              ldid -S "$f" && n=$((n+1))
+            fi
+          done < <(find "$APP" -type f -print0)
+          ldid -SResources/FlameLauncher.entitlements "$BIN"
+          echo "  $n 개 + 메인 실행 파일"
+          echo "▸ 메인 실행 파일 entitlements:"; ldid -e "$BIN"
+
+          mkdir -p out/Payload
+          rm -rf out/Payload/FlameLauncher.app
+          cp -R "$APP" out/Payload/
+          ( cd out && zip -qry FlameLauncher-offline.ipa Payload )
+          ls -lh out/FlameLauncher-offline.ipa
+
+      - name: IPA contents summary
+        run: |
+          A="out/Payload/FlameLauncher.app"
+          echo "── Info.plist"; /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' -c 'Print :MinimumOSVersion' -c 'Print :CFBundleShortVersionString' "$A/Info.plist"
+          echo "── top level"; ls "$A" | head -40
+          echo "── Frameworks"; ls "$A/Frameworks" | head -60
+          echo "── lwjgl341"; ls "$A/Frameworks/lwjgl341" 2>/dev/null
+          echo "── libs / libs341"; ls "$A/libs" "$A/libs341"
+          echo "── java_runtimes"; ls "$A/java_runtimes"; du -sh "$A/java_runtimes"/*
+          echo "── size"; du -sh "$A"
+          file "$A/FlameLauncher" | head -2
+          # 기기용(platform 2) 바이너리인지
+          otool -l "$A/FlameLauncher" | grep -A3 LC_BUILD_VERSION | head -5
+
+      - name: Verify no Microsoft/Mojang login endpoints in the binary
+        run: |
+          set -euo pipefail
+          BIN="out/Payload/FlameLauncher.app/FlameLauncher"
+          if strings -a "$BIN" | grep -E 'login\.live\.com|xboxlive\.com|api\.minecraftservices\.com/authentication|oauth20_(authorize|token)'; then
+            echo "::error::바이너리에 Microsoft 로그인 주소가 남아 있습니다"; exit 1
+          fi
+          echo "OK — Microsoft 로그인 주소 없음"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlameLauncher-offline-ipa
+          path: out/FlameLauncher-offline.ipa
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+
+  # 앱 코드 단위 테스트(닉네임 규칙·오프라인 UUID 등). 시뮬레이터에서 도는 동안
+  # 기기용 네이티브(libterracotta.a)가 링크되지 않을 수 있어 실패해도 IPA 는 막지 않는다.
+  tests:
+    needs: [runtime, javaapp, mgl]
+    runs-on: macos-26
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      # 일부 테스트는 번들에 렌더러 dylib·launcher.jar 가 들어 있는지 본다.
+      - uses: actions/download-artifact@v4
+        with:
+          name: rt-base
+          path: Runtime
+      # 기본 입력 jar(순정 lwjgl-*.jar)는 javaapp 가 만든 병합본으로 대체된다 — 남겨 두면
+      # "게임 라이브러리를 가리는 jar" 테스트가 정당하게 실패한다.
+      - run: rm -f Runtime/libs/*.jar Runtime/libs341/*.jar
+      - uses: actions/download-artifact@v4
+        with:
+          name: rt-javaapp
+          path: Runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: rt-mgl
+          path: Runtime/Frameworks
+      - run: brew install xcodegen
+      - name: Secrets.plist
+        env:
+          FLAME_CURSEFORGE_KEY: ${{ secrets.FLAME_CURSEFORGE_KEY }}
+        run: |
+          Scripts/write-secrets.sh
+          # project.yml 이 이 파일을 복사 단계에 넣는다(optional 이어도 Xcode 가 없으면 빌드를 거부한다).
+          # 키가 없으면 빈 plist — 앱은 CurseForge 검색만 끄고 Modrinth 는 그대로 쓴다.
+          if [ ! -f Resources/Secrets.plist ]; then
+            printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0"><dict/></plist>' > Resources/Secrets.plist
+          fi
+      # 시뮬레이터 빌드는 기기용 libterracotta.a 를 링크할 수 없다. 같은 심볼을 내는 빈 껍데기를
+      # 시뮬레이터용으로 만들어 둔다 — 단위 테스트는 온라인 LAN 을 쓰지 않는다.
+      - name: Simulator stub for libterracotta
+        run: |
+          mkdir -p Runtime/Terracotta
+          printf '#include <stdint.h>\nuint16_t terracotta_ios_start(const char *d){(void)d;return 0;}\n' > /tmp/tc_stub.c
+          xcrun --sdk iphonesimulator clang -arch arm64 -target arm64-apple-ios17.0-simulator \
+            -isysroot "$(xcrun --sdk iphonesimulator --show-sdk-path)" -c /tmp/tc_stub.c -o /tmp/tc_stub.o
+          ar rcs Runtime/Terracotta/libterracotta.a /tmp/tc_stub.o
+      - run: xcodegen generate
+      - name: Unit tests (simulator)
+        run: |
+          set -o pipefail
+          xcodebuild test -project FlameLauncher.xcodeproj -scheme FlameLauncher \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            CODE_SIGNING_ALLOWED=NO > test.log 2>&1 || rc=$?
+          # 전체 로그는 길어서 요약만 보여준다 — 실패한 테스트와 이유, 합계.
+          grep -E "error: |Test Case .* (failed|passed)|Executed [0-9]+ tests" test.log | sed 's|^.*/||' | tail -n 120
+          exit ${rc:-0}
