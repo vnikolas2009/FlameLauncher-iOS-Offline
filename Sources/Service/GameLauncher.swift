@@ -789,7 +789,9 @@ struct GameLauncher {
         let username = session?.username ?? "Player"
         let uuid = session?.uuid ?? "00000000-0000-0000-0000-000000000000"
         let accessToken = session?.accessToken ?? "0"
-        let userType = session != nil ? "msa" : "mojang"
+        // 오프라인 계정이라 서버에 검증받을 토큰이 없다 — "msa" 로 두면 1.19+ 가 Mojang 에
+        // 채팅 키를 요청하다 실패한다. "mojang" 이면 그 시도를 건너뛴다.
+        let userType = "mojang"
         let assetsDir = Paths.assets(for: dir).path
         let versionType = meta.loaderType.map { $0.capitalized } ?? "release"
 

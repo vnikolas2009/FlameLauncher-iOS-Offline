@@ -90,19 +90,30 @@ import pathlib, sys
 
 tc, et, tag = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 
-# 1)+2) easytier 를 포크의 해당 태그로 고정한다.
+# 1)+2) easytier 의존성.
+#
+#    업스트림은 두 가지 모습을 거쳤다:
+#      (옛) `branch = "main"` 이라 2.7.0 을 끌어와 빌드가 깨졌다 → burningtnt 포크의 태그로 고정해야 했다.
+#      (지금) 저장소가 EasyTier 본가의 태그(`tag = "v2.6.4"`)로 직접 고정한다 → 손댈 것이 없다.
+#    지금 모양이면 의존성은 그대로 두고, 옛 모양일 때만 포크로 돌린다.
 p = tc / "Cargo.toml"
 s = p.read_text()
 old = 'easytier = { git = "https://github.com/EasyTier/EasyTier.git", branch = "main"}'
-assert old in s, "Cargo.toml: easytier 의존성 줄을 못 찾았습니다 (업스트림이 바뀜)"
-s = s.replace(old, f'easytier = {{ git = "https://github.com/burningtnt/EasyTier.git", tag = "{tag}" }}', 1)
-
-# 우리가 손본 로컬 체크아웃을 쓰게 한다.
-assert "[patch." not in s, "Cargo.toml 에 이미 [patch] 가 있습니다 (업스트림이 바뀜)"
-s += (
-    '\n[patch."https://github.com/burningtnt/EasyTier.git"]\n'
-    f'easytier = {{ path = "{et / "easytier"}" }}\n'
-)
+et_local = False
+if old in s:
+    s = s.replace(old, f'easytier = {{ git = "https://github.com/burningtnt/EasyTier.git", tag = "{tag}" }}', 1)
+    assert "[patch." not in s, "Cargo.toml 에 이미 [patch] 가 있습니다 (업스트림이 바뀜)"
+    s += (
+        '\n[patch."https://github.com/burningtnt/EasyTier.git"]\n'
+        f'easytier = {{ path = "{et / "easytier"}" }}\n'
+    )
+    et_local = True
+    print("  Cargo.toml: easytier 를 포크 태그로 고정 (옛 모양)")
+else:
+    import re
+    m = re.search(r'^easytier\s*=\s*\{[^}]*tag\s*=\s*"([^"]+)"', s, re.M)
+    assert m, "Cargo.toml: easytier 의존성 줄을 못 찾았습니다 (업스트림이 바뀜)"
+    print(f"  Cargo.toml: easytier 는 이미 태그 {m.group(1)} 로 고정돼 있음 — 그대로 둠")
 
 # iOS 는 정적 라이브러리로 링크한다. cdylib 은 앱 번들에 dylib 을 하나 더 넣고
 # 서명까지 붙여야 해서, 단일 .a 로 받는 편이 배선이 단순하다.
@@ -112,19 +123,24 @@ s = s.replace(old, 'crate-type = ["lib", "staticlib"]', 1)
 p.write_text(s)
 print("  Cargo.toml: easytier 고정 + staticlib")
 
-# 3) EasyTier 의 InterfaceFilter 에 iOS 가 없다. **유일한 진짜 iOS 패치.**
-p = et / "easytier/src/common/network.rs"
-s = p.read_text()
-old = '#[cfg(any(target_os = "android", target_env = "ohos"))]\nimpl InterfaceFilter {'
-assert old in s, "network.rs: InterfaceFilter 의 안드로이드 분기를 못 찾았습니다 (업스트림이 바뀜)"
-s = s.replace(old, (
-    '// iOS 는 안드로이드와 같은 길로 간다. macOS 구현은 `networksetup` CLI 를 부르는데\n'
-    '// iOS 엔 그 명령이 없고, 모바일에서는 인터페이스를 걸러낼 수단도 없다 — 전부 받는다.\n'
-    '#[cfg(any(target_os = "android", target_env = "ohos", target_os = "ios"))]\n'
-    'impl InterfaceFilter {'
-), 1)
-p.write_text(s)
-print("  easytier/common/network.rs: InterfaceFilter 에 iOS 추가")
+# 3) EasyTier 의 InterfaceFilter 에 iOS 가 없던 시절의 패치. **옛 모양일 때만** 적용한다.
+#    (v2.6.4 는 iOS 를 본가가 직접 처리한다 — `target_os = "ios"` 가 이미 들어 있다.)
+if et_local:
+    p = et / "easytier/src/common/network.rs"
+    s = p.read_text()
+    old = '#[cfg(any(target_os = "android", target_env = "ohos"))]\nimpl InterfaceFilter {'
+    if old in s:
+        s = s.replace(old, (
+            '#[cfg(any(target_os = "android", target_env = "ohos", target_os = "ios"))]\n'
+            'impl InterfaceFilter {'
+        ), 1)
+        p.write_text(s)
+        print("  easytier/common/network.rs: InterfaceFilter 에 iOS 추가")
+    else:
+        assert 'target_os = "ios"' in s, "network.rs: iOS 분기도 없고 안드로이드 분기도 못 찾았습니다 (업스트림이 바뀜)"
+        print("  easytier/common/network.rs: iOS 는 이미 있음")
+else:
+    print("  easytier/common/network.rs: 본가 태그를 쓰므로 패치 없음")
 
 # 3.5) iOS 용 C FFI 를 얹는다.
 #
@@ -223,18 +239,45 @@ pub extern "C" fn terracotta_ios_start(data_dir: *const std::ffi::c_char) -> u16
 p.write_text(s)
 print("  src/lib.rs: iOS C FFI(terracotta_ios_start) 추가")
 
-# 4) 고정한 태그에 없는 필드를 쓴다.
+# 4) 테라코타가 쓰는 PeerConfig 필드가 고정한 EasyTier 에 없을 때만 지운다.
+#    (v2.6.4 에는 peer_public_key 가 있다 — 그러면 그대로 둔다.)
 p = tc / "src/rooms/mod.rs"
 s = p.read_text()
+cfg = (et / "easytier/src/common/config.rs").read_text() if et_local else None
+has_field = cfg is None or "pub peer_public_key" in cfg
 old = "                    peer_public_key: None,\n"
-assert old in s, "rooms/mod.rs: peer_public_key 줄을 못 찾았습니다 (업스트림이 바뀜)"
-s = s.replace(old, "", 1)
-p.write_text(s)
-print("  src/rooms/mod.rs: 고정 태그에 없는 peer_public_key 제거")
+if not has_field:
+    assert old in s, "rooms/mod.rs: peer_public_key 줄을 못 찾았습니다 (업스트림이 바뀜)"
+    s = s.replace(old, "", 1)
+    p.write_text(s)
+    print("  src/rooms/mod.rs: 고정 태그에 없는 peer_public_key 제거")
+else:
+    print("  src/rooms/mod.rs: peer_public_key 는 EasyTier 에 있음 — 그대로 둠")
 PATCHES
 
 emit_patch "$TC" terracotta
 emit_patch "$WORK/easytier" easytier
+
+# ── libc 를 EasyTier 가 검증한 버전으로 되돌린다 ──────────────────────────────────
+# 테라코타 저장소는 최근 `libc = "0.2.191"` 로 올렸고 Cargo.lock 도 없다. 그런데 libc 0.2.191 에서는
+# iOS 용으로 쓰던 항목이 빠져, 의존 크레이트가 줄줄이 컴파일되지 않는다:
+#     error[E0432]: unresolved import `libc::RTAX_MAX`           (netdev 0.31)
+#     error[E0425]: cannot find type `sockaddr_ctl` in `libc`    (nix 0.29)
+# EasyTier 는 자기 Cargo.lock 으로 iOS 에서 검증한 libc(0.2.186)를 쓰므로 그 버전을 따른다.
+# 테라코타 코드가 쓰는 libc 항목은 그 사이에 늘어난 게 없다(아래 빌드가 통과하는지로 확인한다).
+LIBC_V=""
+if [ -f "$WORK/easytier/Cargo.lock" ]; then
+  LIBC_V="$(awk '/^name = "libc"$/ { getline; gsub(/[^0-9.]/, "", $3); print $3; exit }' "$WORK/easytier/Cargo.lock")"
+fi
+if [ -n "$LIBC_V" ] && grep -q '^libc *= *"0\.2\.[0-9]*"' "$TC/Cargo.toml"; then
+  echo "▸ libc 를 EasyTier 가 검증한 $LIBC_V 로 고정"
+  # parking_lot 0.13 → parking_lot_core 0.10.0 이 `libc ^0.2.189` 를 요구해 내릴 수 없다.
+  # 0.12 는 테라코타가 올리기 직전까지 쓰던 버전이고 API 가 같다.
+  sed -i '' -e 's|^libc *= *"0\.2\.[0-9]*"|libc = "0.2"|' \
+            -e 's|^parking_lot *= *"0\.13[0-9.]*"|parking_lot = "0.12"|' "$TC/Cargo.toml"
+  ( cd "$TC" && cargo generate-lockfile >/dev/null 2>&1 \
+      && cargo update -p libc --precise "$LIBC_V" 2>&1 | sed 's/^/    /' )
+fi
 
 echo "▸ 빌드 (aarch64-apple-ios, $PROFILE)"
 ( cd "$TC" && cargo build --target aarch64-apple-ios --lib ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} >/dev/null )

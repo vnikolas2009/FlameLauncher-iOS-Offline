@@ -4,7 +4,7 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
-  # 시스템 언어가 한국어면 한국어, 그 밖에는 영어(개발 언어)로 뜬다.
+  # 시스템 언어가 한국어/러시아어면 그 언어, 그 밖에는 영어(개발 언어)로 뜬다.
   developmentLanguage: en
 
 settings:
@@ -112,6 +112,7 @@ targets:
       # 아니면 en 쪽(영어)이 쓰인다. 자세한 건 Localizable.strings 머리말 참고.
       - path: Resources/en.lproj/Localizable.strings
       - path: Resources/ko.lproj/Localizable.strings
+      - path: Resources/ru.lproj/Localizable.strings
       # iOS(arm64) OpenJDK. 번들에 넣어두면 사용자가 따로 준비할 게 없다.
       # 기기 Documents/runtimes/ 에 넣은 JRE 가 있으면 그쪽이 우선한다.
       - path: Runtime/java_runtimes
@@ -176,7 +177,8 @@ targets:
         # 패치된 LWJGL 이 pojav* 심볼을 RTLD_DEFAULT 로 찾아간다 — 실행 파일이 심볼을 내보내야 한다.
         # 테라코타는 정적 라이브러리로 링크한다(Scripts/build-terracotta.sh 가 만든다).
         # dylib 이 아니라 .a 인 이유: 번들에 파일을 하나 더 넣고 서명까지 붙일 필요가 없다.
-        OTHER_LDFLAGS: -Xlinker -export_dynamic $(SRCROOT)/Runtime/Terracotta/libterracotta.a
+        # libterracotta.a(EasyTier → system-configuration 크레이트)가 SCNetwork* 심볼을 쓴다.
+        OTHER_LDFLAGS: -Xlinker -export_dynamic $(SRCROOT)/Runtime/Terracotta/libterracotta.a -framework SystemConfiguration
         # ⚠️ Xcode 는 Release 에서만 이 값을 YES 로 준다(=-fvisibility=hidden). 그러면 위의
         #    -export_dynamic 이 내보낼 전역 심볼이 **하나도 남지 않는다**: 링크된 실행 파일에서
         #    `main` 이 T(전역) 가 아니라 t(로컬) 가 되고, export trie 에서 사라진다.

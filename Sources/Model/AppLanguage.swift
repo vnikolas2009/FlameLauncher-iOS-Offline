@@ -1,12 +1,12 @@
 import Foundation
 
-/// 앱 표시 언어. 시스템 언어를 따르거나(기본), 영어·한국어로 고정한다.
+/// 앱 표시 언어. 시스템 언어를 따르거나(기본), 영어·러시아어·한국어로 고정한다.
 ///
 /// ⚠️ 왜 앱 안에 두는가 — 게임을 실행하면 JIT 때문에 앱이 스스로 다시 뜨는 구간이 있는데,
 ///    `-AppleLanguages` 실행 인자로 준 언어는 그때 사라진다. 여기서 UserDefaults 에 적어 두면
 ///    다시 떠도 그대로 유지된다(iOS 설정 → 앱 → 언어와 같은 자리에 쓰는 값이다).
 enum AppLanguage: String, CaseIterable, Identifiable {
-    case system, english, korean
+    case system, english, russian, korean
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .system:  return String(localized: "시스템 언어")
         case .english: return "English"
+        case .russian: return "Русский"
         case .korean:  return "한국어"
         }
     }
@@ -24,6 +25,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .system:  return nil
         case .english: return ["en"]
+        case .russian: return ["ru"]
         case .korean:  return ["ko"]
         }
     }
@@ -35,7 +37,10 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         guard let saved = UserDefaults.standard.object(forKey: key) as? [String],
               let first = saved.first
         else { return .system }
-        return first.hasPrefix("ko") ? .korean : first.hasPrefix("en") ? .english : .system
+        if first.hasPrefix("ko") { return .korean }
+        if first.hasPrefix("en") { return .english }
+        if first.hasPrefix("ru") { return .russian }
+        return .system
     }
 
     /// 고른 언어를 저장한다. 이미 떠 있는 화면은 그대로이고, 앱을 다시 열면 바뀐다

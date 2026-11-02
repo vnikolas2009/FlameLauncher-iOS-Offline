@@ -736,75 +736,43 @@ final class FlameLauncherTests: XCTestCase {
 
     // MARK: - 로그인
 
-    /// XSTS 는 거절 사유를 본문의 XErr 코드로만 준다. 매핑이 깨지면 사용자는
-    /// "요청 실패 (401)" 만 보게 되는데, 실제로는 대부분 안내 가능한 계정 문제다.
-    func testXstsErrorMessages() {
-        func message(_ xerr: Int64) -> String {
-            let body = try! JSONSerialization.data(withJSONObject: ["XErr": xerr])
-            return AuthStore.xstsMessage(for: .init(code: 401, url: "x", body: body))
+    /// 닉네임 규칙은 마인크래프트와 같다: 3~16자, 영문·숫자·밑줄. 어긋나면 서버가 접속을 거부한다.
+    func testNicknameValidation() {
+        for ok in ["Steve", "abc", "Player_123", "A234567890123456"] {
+            XCTAssertTrue(AuthStore.isValidNickname(ok), ok)
         }
-        XCTAssertTrue(message(2_148_916_233).contains("Xbox 프로필이 없습니다"))
-        XCTAssertTrue(message(2_148_916_235).contains("국가/지역"))
-        XCTAssertTrue(message(2_148_916_236).contains("성인 인증"))
-        XCTAssertTrue(message(2_148_916_237).contains("성인 인증"))
-        XCTAssertTrue(message(2_148_916_238).contains("미성년자"))
-        // 모르는 코드도 코드값은 보여줘야 검색이라도 할 수 있다.
-        XCTAssertTrue(message(2_148_916_299).contains("2148916299"))
-
-        // 본문이 JSON 이 아닐 때도 죽지 않아야 한다.
-        let garbage = AuthStore.xstsMessage(for: .init(code: 401, url: "x", body: Data("nope".utf8)))
-        XCTAssertTrue(garbage.contains("알 수 없음"))
+        for bad in ["", "ab", "A2345678901234567", "has space", "한글닉네임", "a-b", "name!", " Steve"] {
+            XCTAssertFalse(AuthStore.isValidNickname(bad), bad)
+        }
     }
 
-    /// 스코프와 RpsTicket 접두사는 한 쌍이다. `XboxLive.signin` 은 `d=` 가 필요하고
-    /// 레거시 `MBI_SSL` 은 붙이면 안 된다 — 어긋나면 XBL 인증이 조용히 실패한다.
-    ///
-    /// 리디렉션이 https 라 WKWebView 로 가로채야 한다는 점도 여기서 고정한다.
-    /// (ASWebAuthenticationSession 으로 되돌리면 로그인이 영영 안 끝난다)
-    func testAuthFlowParameters() {
-        XCTAssertEqual(AuthStore.scope, "XboxLive.signin offline_access")
-        XCTAssertTrue(AuthStore.redirectURI.hasPrefix("https://"),
-                      "https 리디렉션이면 커스텀 스킴 콜백을 쓸 수 없다")
+    /// 오프라인 UUID 는 바닐라 `UUID.nameUUIDFromBytes("OfflinePlayer:" + 이름)` 과 같아야 한다.
+    /// 어긋나면 같은 닉네임인데도 서버/월드에서 다른 플레이어로 취급돼 인벤토리가 사라진다.
+    /// (알려진 값: Notch → b50ad385-829d-3141-a216-7e7d7539ba7f)
+    func testOfflineUUIDMatchesVanilla() {
+        XCTAssertEqual(AuthSession.offlineUUID(for: "Notch"), "b50ad385829d3141a2167e7d7539ba7f")
+        XCTAssertEqual(AuthSession.offlineUUID(for: "Notch"), AuthSession.offlineUUID(for: "Notch"))
+        XCTAssertNotEqual(AuthSession.offlineUUID(for: "Notch"), AuthSession.offlineUUID(for: "notch"))
+        XCTAssertEqual(AuthSession.offlineUUID(for: "Steve").count, 32)
     }
 
-    /// 로그인이 끝나면 리디렉션 URL 에 결과가 실려 온다. 이 파싱이 깨지면
-    /// "로그인 정보를 받을 수 없음" 으로만 보인다.
+    /// 닉네임은 재실행 후에도 남고, 잘못된 값은 저장되지 않는다.
     @MainActor
-    func testRedirectParsing() throws {
-        func parse(_ query: String) -> Result<String, Error> {
-            MicrosoftLoginController.parse(
-                redirect: URL(string: "https://login.live.com/oauth20_desktop.srf?\(query)")!)
-        }
+    func testNicknamePersistence() {
+        let store = AuthStore()
+        store.logout()
+        XCTAssertFalse(store.isLoggedIn)
 
-        XCTAssertEqual(try parse("code=M.C123_BAY.2.U.abc").get(), "M.C123_BAY.2.U.abc")
+        XCTAssertFalse(store.setNickname("no"))
+        XCTAssertFalse(store.isLoggedIn)
 
-        // 거절은 취소와 같게 — 오류 알림을 띄우면 안 된다.
-        if case .failure(let error) = parse("error=access_denied&error_description=nope") {
-            XCTAssertEqual(error as? AuthStore.AuthError, .cancelled)
-        } else { XCTFail("거절을 취소로 처리해야 합니다") }
+        XCTAssertTrue(store.setNickname("  Steve_1  "))
+        XCTAssertEqual(store.username, "Steve_1")
+        XCTAssertEqual(store.session?.accessToken, "0")
 
-        // 그 외 오류는 서버가 준 설명을 그대로 보여준다.
-        if case .failure(let error) = parse("error=invalid_scope&error_description=bad%20scope") {
-            XCTAssertTrue(error.localizedDescription.contains("bad scope"))
-        } else { XCTFail("오류를 전달해야 합니다") }
-
-        // code 도 error 도 없으면 실패로 친다(빈 code 포함).
-        XCTAssertThrowsError(try parse("code=").get())
-        XCTAssertThrowsError(try parse("").get())
-    }
-
-    /// 만료 판정은 epoch **밀리초** 기준이다 — 초로 착각하면 항상 만료로 보여
-    /// 매번 재로그인을 요구하게 된다.
-    func testSessionExpiry() {
-        let now = Date().timeIntervalSince1970 * 1000
-        func session(expiresAt: Double) -> AuthSession {
-            AuthSession(username: "a", uuid: "b", accessToken: "c",
-                        refreshToken: "d", expiresAt: expiresAt)
-        }
-        XCTAssertTrue(session(expiresAt: now + 3_600_000).isValid)
-        XCTAssertFalse(session(expiresAt: now - 1000).isValid)
-        // 만료 1분 전부터는 갱신하러 간다(요청 도중에 만료되는 것 방지).
-        XCTAssertFalse(session(expiresAt: now + 30_000).isValid)
+        XCTAssertEqual(AuthStore().username, "Steve_1")   // 새 인스턴스 = 앱 재실행
+        store.logout()
+        XCTAssertNil(AuthStore().username)
     }
 
     /// 토큰은 파일이 아니라 키체인에 넣는다.
