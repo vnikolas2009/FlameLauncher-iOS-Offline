@@ -124,7 +124,6 @@ inside StikDebug. The computer is not needed again after step 3.
 | Situation | Method |
 |---|---|
 | **iOS 17.0 – 17.3** | [SideJITServer](https://github.com/nythepegasus/SideJITServer) — run it on a computer, same Wi-Fi |
-| **Already on AltStore / SideStore** | **Enable JIT** in the app list — same Wi-Fi as your AltServer |
 | **Developers** | Run with Xcode attached |
 
 ### 2-5. First run

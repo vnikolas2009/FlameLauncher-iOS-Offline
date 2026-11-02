@@ -204,7 +204,7 @@ targets:
         GCC_WARN_64_TO_32_BIT_CONVERSION: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     postBuildScripts:
-      # ⚠️ 미리 빌드된 dylib(렌더러·LWJGL·MoltenVK·AltKit)은 그냥 복사만 되면 **서명이 없다**.
+      # ⚠️ 미리 빌드된 dylib(렌더러·LWJGL·MoltenVK)은 그냥 복사만 되면 **서명이 없다**.
       #    iOS 는 번들 안의 Mach-O 가 전부 앱과 같은 신원으로 서명돼 있어야 로드해 준다 —
       #    서명이 없으면 기기에서 dlopen 이 실패하고 게임이 검은 화면으로 뜬다.
       #    Xcode 의 "Code Sign On Copy" 는 이 복사 단계에 적용되지 않아 직접 서명한다.

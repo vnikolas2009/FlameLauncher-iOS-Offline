@@ -6,9 +6,6 @@
 " · 아틀라스 상한 " = " · atlas cap ";
 ") 에 맞는 빌드만 보여줍니다" = ") only";
 "260 FPS 상한 + VSync 끔" = "260 FPS cap, VSync off";
-"AltServer 다시 찾기" = "Look for AltServer again";
-"AltServer 로 JIT 켜기" = "Enable JIT with AltServer";
-"AltServer 연결 실패" = "Could not reach AltServer";
 "CurseForge API 키가 없습니다. Info.plist 의 CURSEFORGE_API_KEY 를 채워주세요." = "No CurseForge API key. Fill in CURSEFORGE_API_KEY in Info.plist.";
 "CurseForge 모드팩은 API 키가 있어야 파일을 받을 수 있습니다." = "CurseForge modpacks need an API key before files can be downloaded.";
 "FPS 제한 해제" = "Unlock the frame rate";
@@ -221,7 +218,6 @@
 "취소" = "Cancel";
 "취소하고 나가기" = "Cancel and leave";
 "친구에게 아래 코드를 알려주세요" = "Give your friends the code below";
-"컴퓨터의 AltServer 와 같은 Wi-Fi 에 있어야 합니다. 찾는 중…" = "You need to be on the same Wi-Fi as AltServer on your computer. Looking…";
 "켜기" = "On";
 "크래시 기록이 없어요" = "No crash reports";
 "크래시 리포트" = "Crash report";

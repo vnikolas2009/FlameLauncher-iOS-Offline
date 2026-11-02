@@ -3,7 +3,7 @@ import SwiftUI
 /// 게임을 띄우기 전에 JIT 를 켜는 화면. PojavLauncher iOS 의 "JIT 대기" 알림에 해당하지만,
 /// 그냥 기다리게만 두지 않고 **왜 필요한지와 지금 쓸 수 있는 방법**을 같이 보여준다.
 ///
-/// 자동 경로(TrollStore / AltServer)가 있으면 진입하자마자 시도하고, 어느 쪽이든 켜지는
+/// 자동 경로(TrollStore / StikDebug)가 있으면 진입하자마자 시도하고, 어느 쪽이든 켜지는
 /// 즉시 자동으로 넘어간다.
 struct JITGateView: View {
     @Environment(JITStatus.self) private var jit
@@ -102,7 +102,7 @@ struct JITGateView: View {
                 Button {
                     Task { await jit.retry() }
                 } label: {
-                    Text(jit.method == .altServer ? "AltServer 다시 찾기" : "다시 확인")
+                    Text("다시 확인")
                         .font(.system(size: 14, weight: .bold))
                 }
                 .buttonStyle(FlameButtonStyle(height: 46))

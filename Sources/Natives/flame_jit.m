@@ -12,8 +12,8 @@
 //    2. 탈옥             — 플랫폼 바이너리로 취급되어 자동
 //    3. no-sandbox       — 자기 자신을 자식으로 띄워 ptrace(PT_TRACE_ME)  (TrollStore/탈옥)
 //    4. TrollStore JIT   — apple-magnifier://enable-jit URL 로 TrollStore 에 요청
-//    5. AltServer        — 같은 Wi-Fi 의 AltStore/SideStore 서버에 붙어 요청 (AltKit)
-//    6. 그 외            — StikDebug 등으로 사용자가 직접 붙일 때까지 기다린다
+//    5. StikDebug        — stikjit:// URL 로 StikDebug(17.3 이하는 SideStore)에 요청
+//    6. 그 외            — 사용자가 직접 붙일 때까지 기다린다
 //
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
@@ -458,9 +458,6 @@ bool FlameNativeRequestFlameJIT(void) {
 ///
 /// - Returns: 요청을 보냈으면 true. 켜졌는지는 호출자가 폴링으로 확인해야 한다.
 bool FlameNativeRequestDebuggerJIT(void) {
-    // 우리 도우미가 깔려 있고 페어링 파일이 있으면 그쪽이 먼저다(사용자가 할 일이 없다).
-    if (FlameNativeRequestFlameJIT()) return true;
-
     NSString *bundleId = NSBundle.mainBundle.bundleIdentifier;
     NSString *urlString;
 
@@ -491,12 +488,23 @@ bool FlameNativeRequestDebuggerJIT(void) {
     //    "요청 보냈음"이 되어, 호출자는 영원히 오지 않을 CS_DEBUGGED 를 기다린다
     //    (화면에는 아무 설명 없이 스피너만 돈다).
     //    canOpenURL 은 Info.plist 의 LSApplicationQueriesSchemes 에 스킴이 있어야 답한다.
-    if (![UIApplication.sharedApplication canOpenURL:url]) return false;
+    if (![UIApplication.sharedApplication canOpenURL:url]) {
+        // StikDebug 가 없을 때만, 선택 설치인 JIT 도우미(FlameJIT)로 넘어간다.
+        return FlameNativeRequestFlameJIT();
+    }
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
     });
     return true;
+}
+
+bool FlameNativeStikDebugAvailable(void) {
+    NSString *scheme = nil;
+    if (@available(iOS 17.4, *)) scheme = @"stikjit://enable-jit";
+    else scheme = @"sidestore://sidejit-enable";
+    NSURL *url = [NSURL URLWithString:scheme];
+    return url && [UIApplication.sharedApplication canOpenURL:url];
 }
 
 /// 버전을 바꿀 때 쓰는 변형. **pid 를 넘기지 않는다.**
@@ -532,80 +540,6 @@ bool FlameNativeRequestDebuggerJITForRelaunch(void) {
 
     [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
     return true;
-}
-
-// MARK: - AltServer (AltKit)
-
-// AltKit 은 AltStore 가 만든 Swift 프레임워크다. **링크하지 않고** 런타임에 찾는다 —
-// 기기용 arm64 바이너리라 링크하면 시뮬레이터 빌드가 통째로 깨지고, 프레임워크가 없는
-// 환경에서도 앱은 정상으로 떠야 하기 때문이다.
-@protocol FlameALTServerConnection <NSObject>
-- (void)enableUnsignedCodeExecutionWithCompletionHandler:(void (^)(BOOL success, NSError *error))handler;
-- (void)disconnect;
-@end
-
-@protocol FlameALTServerManager <NSObject>
-- (void)autoconnectWithCompletionHandler:(void (^)(id connection, NSError *error))handler;
-- (void)startDiscovering;
-- (void)stopDiscovering;
-@end
-
-static id<FlameALTServerManager> altServerManager(void) {
-    static id<FlameALTServerManager> manager;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSString *path = [NSBundle.mainBundle.bundlePath
-            stringByAppendingPathComponent:@"Frameworks/AltKit.framework/AltKit"];
-        dlopen([NSBundle.mainBundle.bundlePath
-            stringByAppendingPathComponent:@"Frameworks/CAltKit.framework/CAltKit"].UTF8String, RTLD_GLOBAL);
-        dlopen(path.UTF8String, RTLD_GLOBAL);
-
-        Class cls = NSClassFromString(@"ALTServerManager");
-        if (!cls) {
-            NSLog(@"[FlameJIT] AltKit 이 번들에 없습니다 — AltServer 경로 건너뜀");
-            return;
-        }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        manager = [cls performSelector:@selector(sharedManager)];
-#pragma clang diagnostic pop
-    });
-    return manager;
-}
-
-bool FlameNativeAltServerAvailable(void) { return altServerManager() != nil; }
-
-void FlameNativeRequestAltServerJIT(void (^completion)(bool success, NSString *message)) {
-    id<FlameALTServerManager> manager = altServerManager();
-    if (!manager) {
-        completion(false, @"AltKit 이 앱에 포함되어 있지 않습니다.");
-        return;
-    }
-
-    [manager startDiscovering];
-    [manager autoconnectWithCompletionHandler:^(id connection, NSError *error) {
-        if (error || !connection) {
-            NSLog(@"[FlameJIT] AltServer 자동 연결 실패: %@", error.localizedRecoverySuggestion);
-            completion(false, error.localizedRecoverySuggestion
-                ?: @"같은 Wi-Fi 에서 AltServer 를 찾지 못했습니다.");
-            return;
-        }
-        id<FlameALTServerConnection> conn = connection;
-        [conn enableUnsignedCodeExecutionWithCompletionHandler:^(BOOL success, NSError *error) {
-            [manager stopDiscovering];
-            if (success) {
-                NSLog(@"[FlameJIT] AltServer 로 JIT 활성화 성공");
-                completion(true, nil);
-            } else {
-                NSLog(@"[FlameJIT] AltServer JIT 실패: %@", error.localizedRecoverySuggestion);
-                completion(false, error.localizedRecoverySuggestion ?: @"AltServer 가 JIT 요청을 거절했습니다.");
-            }
-        }];
-    }];
-}
-
-void FlameNativeStopAltServerDiscovery(void) {
-    [altServerManager() stopDiscovering];
 }
 
 // MARK: - 자체 활성화 (TrollStore / 탈옥 전용)
@@ -669,7 +603,7 @@ NSString *FlameNativeDiagnostics(void) {
         [NSString stringWithFormat:@"디버거 연결 허용(get-task-allow): %@",
             FlameNativeIsDebuggable() ? @"예 ✓" : @"아니오 ✗ — 개발용 인증서로 서명해야 합니다"],
         [NSString stringWithFormat:@"TrollStore JIT: %@", FlameNativeHasTrollStoreJIT() ? @"가능" : @"없음"],
-        [NSString stringWithFormat:@"AltServer 연동: %@", FlameNativeAltServerAvailable() ? @"가능" : @"없음"],
+        [NSString stringWithFormat:@"StikDebug: %@", FlameNativeStikDebugAvailable() ? @"설치됨" : @"없음 — 설치해야 JIT 를 자동으로 켤 수 있습니다"],
         [NSString stringWithFormat:@"확장 가상 주소: %@ (없으면 힙 상한이 낮아집니다)",
             FlameNativeHasEntitlement(@"com.apple.developer.kernel.extended-virtual-addressing") ? @"있음" : @"없음"],
         [NSString stringWithFormat:@"메모리 상한 완화: %@",

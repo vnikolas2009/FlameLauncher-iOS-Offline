@@ -17,9 +17,7 @@ final class JITStatus {
         case alreadyOn
         /// TrollStore 가 URL 스킴으로 켜준다.
         case trollStore
-        /// 같은 Wi-Fi 의 AltServer 에 붙어 켠다.
-        case altServer
-        /// StikDebug / SideStore 를 URL 스킴으로 불러 자동으로 켠다.
+        /// StikDebug(iOS 17.4+) / SideStore(17.3 이하)를 URL 스킴으로 불러 자동으로 켠다.
         /// (Amethyst 의 `invokeAfterJITEnabled:` 와 같은 방식)
         case debugger
         /// 자동 호출이 실패했다 — 사용자가 직접 붙여야 한다.
@@ -33,7 +31,6 @@ final class JITStatus {
             switch self {
             case .alreadyOn:   return String(localized: "JIT 켜짐")
             case .trollStore:  return String(localized: "TrollStore 로 JIT 켜기")
-            case .altServer:   return String(localized: "AltServer 로 JIT 켜기")
             case .debugger:    return String(localized: "JIT 를 켜는 중")
             case .manual:      return String(localized: "디버거 연결을 기다리는 중")
             case .impossible:  return String(localized: "이 서명으로는 JIT 를 켤 수 없습니다")
@@ -47,12 +44,10 @@ final class JITStatus {
                 return String(localized: "바로 실행할 수 있어요.")
             case .trollStore:
                 return String(localized: "TrollStore 로 전환됐다가 자동으로 돌아옵니다. 별도 조작은 필요 없어요.")
-            case .altServer:
-                return String(localized: "컴퓨터의 AltServer 와 같은 Wi-Fi 에 있어야 합니다. 찾는 중…")
             case .debugger:
                 return """
-                JIT 도우미로 자동 전환됐다가 곧 돌아옵니다. 별도 조작은 필요 없어요.
-                페어링 파일과 스크립트를 같이 보내므로 도우미에서 고를 것은 없습니다.
+                StikDebug 로 자동 전환됐다가 곧 돌아옵니다. 별도 조작은 필요 없어요.
+                JIT 스크립트를 같이 보내므로 StikDebug 안에서 고를 것은 없습니다.
                 """
             case .manual:
                 return """
@@ -140,15 +135,9 @@ final class JITStatus {
 
             if FlameNativeHasTrollStoreJIT() { return .trollStore }
             if !isDebuggable { return .impossible }
-            // ⚠️ 우리 도우미가 **AltServer 보다 먼저**다. 아이패드처럼 AltStore 가 깔린
-            //    기기에서는 AltServer 경로가 먼저 걸려 버리는데, 그건 컴퓨터가 같은
-            //    Wi-Fi 에 있어야 하고 iOS 18 에서는 JIT 를 못 켠다 — 실측: 그 상태로
-            //    "JIT 가 필요합니다" 화면에서 멈췄다. 도우미는 기기 안에서 끝난다.
-            if FlameNativeFlameJITAvailable() { return .debugger }
-            if FlameNativeAltServerAvailable() { return .altServer }
-            // ⚠️ 예전에는 여기서 바로 .manual 이었다 — 사용자가 StikDebug 를 열고 앱을
-            //    고르고 스크립트를 지정하는 걸 매번 손으로 해야 했다.
-            //    URL 스킴으로 부르면 그 과정이 통째로 사라진다.
+            // JIT 는 StikDebug(SideStore) 가 켠다. URL 스킴으로 부르면 앱 고르기·스크립트
+            // 지정이 통째로 사라진다. AltServer 경로는 없다 — 컴퓨터가 같은 Wi-Fi 에
+            // 있어야 하고 iOS 18 이상에서는 JIT 를 못 켠다.
             return .debugger
         }()
 
@@ -182,8 +171,6 @@ final class JITStatus {
         switch method {
         case .trollStore:
             _ = FlameNativeRequestTrollStoreJIT()
-        case .altServer:
-            await requestAltServer()
         case .debugger:
             if !FlameNativeRequestDebuggerJIT() {
                 method = .manual
@@ -194,7 +181,7 @@ final class JITStatus {
         }
 
         // 어떤 경로든 결국 CS_DEBUGGED 가 서기를 기다린다.
-        // (TrollStore 는 앱 전환 후, AltServer 는 응답 후, 수동은 사용자가 붙인 뒤)
+        // (TrollStore·StikDebug 는 앱 전환 후, 수동은 사용자가 붙인 뒤)
         let task = Task { await waitUntilEnabled(deadline: deadline) }
         waiter = task
         let result = await task.value
@@ -232,11 +219,7 @@ final class JITStatus {
     func retry() async {
         refresh()
         guard !isEnabled else { return }
-        if method == .altServer {
-            isWorking = true
-            await requestAltServer()
-            isWorking = false
-        } else if method == .trollStore {
+        if method == .trollStore {
             _ = FlameNativeRequestTrollStoreJIT()
         } else if method == .debugger {
             _ = FlameNativeRequestDebuggerJIT()
@@ -247,16 +230,6 @@ final class JITStatus {
     func cancel() {
         waiter?.cancel()
         waiter = nil
-        FlameNativeStopAltServerDiscovery()
-    }
-
-    private func requestAltServer() async {
-        let message: String? = await withCheckedContinuation { continuation in
-            FlameNativeRequestAltServerJIT { success, message in
-                continuation.resume(returning: success ? nil : (message ?? String(localized: "AltServer 연결 실패")))
-            }
-        }
-        failureMessage = message
     }
 
     /// 200ms 마다 확인한다 — PojavLauncher iOS 와 같은 주기.

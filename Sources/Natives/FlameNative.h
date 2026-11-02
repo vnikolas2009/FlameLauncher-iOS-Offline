@@ -181,14 +181,8 @@ void FlameNativeJITNote(NSString *note);
 
 bool FlameNativeRequestDebuggerJIT(void);
 
-/// AltKit 이 번들에 들어 있는지 — 없으면 AltServer 경로는 쓸 수 없다.
-bool FlameNativeAltServerAvailable(void);
-
-/// 같은 Wi-Fi 의 AltServer(AltStore/SideStore)를 찾아 JIT 활성화를 요청한다.
-/// 완료 핸들러는 아무 스레드에서나 불릴 수 있다.
-void FlameNativeRequestAltServerJIT(void (^completion)(bool success, NSString *_Nullable message));
-
-void FlameNativeStopAltServerDiscovery(void);
+/// StikDebug(17.4+) / SideStore(17.3 이하) 가 깔려 있는가 — URL 스킴을 열 수 있는지로 본다.
+bool FlameNativeStikDebugAvailable(void);
 
 /// 진단 문자열 — 왜 못 도는지 사용자에게 그대로 보여준다.
 NSString *FlameNativeDiagnostics(void);

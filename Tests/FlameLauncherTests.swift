@@ -850,7 +850,7 @@ final class FlameLauncherTests: XCTestCase {
     func testDiagnosticsCoversEveryGate() {
         let text = FlameNativeDiagnostics()
         for key in ["설치 유형", "JIT", "get-task-allow", "TrollStore JIT",
-                    "AltServer 연동", "확장 가상 주소", "물리 메모리"] {
+                    "StikDebug", "확장 가상 주소", "물리 메모리"] {
             XCTAssertTrue(text.contains(key), "진단에 '\(key)' 가 없습니다")
         }
     }

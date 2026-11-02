@@ -47,8 +47,7 @@ fetch_dir "JavaApp/libs/caciocavallo17"        "Runtime/libs_caciocavallo17"
 
 # .framework 는 위 방식(파일 목록)으로는 못 받는다.
 #   libEGL / libGLESv2 — MetalANGLE. libtinygl4angle.dylib 이 의존한다.
-#   AltKit / CAltKit  — 같은 Wi-Fi 의 AltServer 에 붙어 JIT 를 켜는 데 쓴다(선택).
-for fw in libEGL libGLESv2 AltKit CAltKit; do
+for fw in libEGL libGLESv2; do
   echo "▸ Runtime/Frameworks/$fw.framework"
   mkdir -p "$ROOT/Runtime/Frameworks/$fw.framework"
   for f in "$fw" Info.plist; do
